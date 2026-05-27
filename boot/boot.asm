@@ -2,60 +2,43 @@
 [ORG 0x7C00]
 
 start:
-    ; Clear screen (80x25 text mode)
-    mov ah, 0x00
-    mov al, 0x03
-    int 0x10
-
-    ; Print first message
+    ; Print welcome message
     mov si, message
-    call print_string
 
-    ; Wait for a key press
+print_loop:
+    lodsb
+    cmp al, 0
+    je wait_for_key
+
+    mov ah, 0x0E
+    int 0x10
+    jmp print_loop
+
+wait_for_key:
+    ; Wait for key press
     mov ah, 0x00
     int 0x16
 
-    ; Save pressed key
+    ; Save pressed key (ASCII in AL)
     mov bl, al
 
-    ; Move to next line
+    ; New line
     mov ah, 0x0E
+
     mov al, 0x0D
     int 0x10
 
     mov al, 0x0A
     int 0x10
 
-    ; Print second message
-    mov si, pressed_msg
-    call print_string
-
-    ; Print the pressed key
-    mov ah, 0x0E
+    ; Print pressed key
     mov al, bl
     int 0x10
 
 halt:
-    jmp $
+    jmp halt
 
-; -------------------------
-; Print string routine
-; -------------------------
-print_string:
-.next_char:
-    lodsb
-    cmp al, 0
-    je .done
+message db "Welcome to RohanOS! Press any key:", 0
 
-    mov ah, 0x0E
-    int 0x10
-    jmp .next_char
-
-.done:
-    ret
-
-message db "Hello from Bootloader! Press any key...", 0
-pressed_msg db "You pressed: ", 0
-
-times 510 - ($ - $$) db 0
+times 510-($-$$) db 0
 dw 0xAA55
