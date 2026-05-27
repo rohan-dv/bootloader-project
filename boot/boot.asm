@@ -2,6 +2,15 @@
 [ORG 0x7C00]
 
 start:
+    ; Initialize stack
+    cli                 ; disable interrupts
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
+    mov sp, 0x7C00
+    sti                 ; enable interrupts
+
     ; Print welcome message
     mov si, message
 
@@ -16,19 +25,15 @@ print_loop:
 
 
 keyboard_loop:
-    ; Wait for key press
     mov ah, 0x00
     int 0x16
 
-    ; Check Enter key (ASCII 13)
     cmp al, 13
     je handle_enter
 
-    ; Check Backspace key (ASCII 8)
     cmp al, 8
     je handle_backspace
 
-    ; Normal character
     mov ah, 0x0E
     int 0x10
     jmp keyboard_loop
@@ -37,11 +42,9 @@ keyboard_loop:
 handle_enter:
     mov ah, 0x0E
 
-    ; carriage return
     mov al, 0x0D
     int 0x10
 
-    ; line feed
     mov al, 0x0A
     int 0x10
 
@@ -51,15 +54,12 @@ handle_enter:
 handle_backspace:
     mov ah, 0x0E
 
-    ; Move cursor back
     mov al, 8
     int 0x10
 
-    ; Print space (erase char)
     mov al, ' '
     int 0x10
 
-    ; Move back again
     mov al, 8
     int 0x10
 
