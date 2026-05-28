@@ -1,55 +1,150 @@
-BITS 16
-ORG 0x7C00
+[org 0x7C00]
+bits 16
 
 start:
-    ; initialize segment registers
-    mov ax, 0
+    ; setup segments
+    xor ax, ax
     mov ds, ax
     mov es, ax
 
-    ; print startup message
-    mov si, welcome_msg
-    call print_string
+    ; setup stack
+    mov ss, ax
+    mov sp, 0x7C00
 
-main_loop:
-    ; show prompt
+    ; welcome message
+    mov si, message
+    call print_string
+    call newline
+
+    ; first prompt
     mov si, prompt
     call print_string
 
-    ; start storing input from beginning of buffer
-    mov di, input_buffer
-
-read_input:
-    ; wait for key press
+main_loop:
+    ; wait for key
     mov ah, 0
     int 0x16
 
     ; Enter key
     cmp al, 13
-    je enter_pressed
+    je handle_enter
 
     ; Backspace key
     cmp al, 8
-    je backspace_pressed
+    je handle_backspace
 
-    ; store typed character
-    mov [di], al
-    inc di
+    ; don't overflow buffer
+    mov bl, [buffer_index]
+    cmp bl, 63
+    je main_loop
 
-    ; print typed character
+    ; store typed char in buffer
+    mov bh, 0
+    mov si, buffer
+    add si, bx
+    mov [si], al
+
+    ; move index forward
+    inc byte [buffer_index]
+
+    ; print typed char
     mov ah, 0x0E
     int 0x10
 
-    jmp read_input
+    jmp main_loop
 
-backspace_pressed:
-    ; avoid deleting beyond start of buffer
-    cmp di, input_buffer
-    je read_input
 
-    dec di
+handle_enter:
+    ; add string ending
+    mov bl, [buffer_index]
+    mov bh, 0
+    mov si, buffer
+    add si, bx
+    mov byte [si], 0
 
-    ; erase character from screen
+    call newline
+
+    ; check help
+    mov si, buffer
+    mov di, help_cmd
+    call compare_strings
+
+    cmp al, 1
+    je run_help
+
+    ; check clear
+    mov si, buffer
+    mov di, clear_cmd
+    call compare_strings
+
+    cmp al, 1
+    je run_clear
+
+    ; check echo
+    mov si, buffer
+    mov di, echo_cmd
+    call starts_with
+
+    cmp al, 1
+    je run_echo
+
+    ; unknown command
+    mov si, unknown_text
+    call print_string
+    jmp reset_input
+
+
+run_help:
+    mov si, help_text_1
+    call print_string
+    call newline
+
+    mov si, help_text_2
+    call print_string
+    call newline
+
+    mov si, help_text_3
+    call print_string
+    call newline
+
+    jmp reset_input
+
+
+run_clear:
+    call clear_screen
+    jmp reset_input
+
+
+run_echo:
+    ; skip "echo "
+    mov si, buffer
+    add si, 5
+    call print_string
+    call newline
+    jmp reset_input
+
+
+reset_input:
+    ; reset buffer
+    mov byte [buffer_index], 0
+    mov byte [buffer], 0
+
+    ; show prompt again
+    mov si, prompt
+    call print_string
+
+    jmp main_loop
+
+
+handle_backspace:
+    ; nothing to delete
+    cmp byte [buffer_index], 0
+    je main_loop
+
+    ; move index back
+    dec byte [buffer_index]
+
+    ; remove char visually
     mov ah, 0x0E
 
     mov al, 8
@@ -61,87 +156,25 @@ backspace_pressed:
     mov al, 8
     int 0x10
 
-    jmp read_input
-
-enter_pressed:
-    ; add null terminator to end input string
-    mov byte [di], 0
-
-    ; move to next line
-    mov ah, 0x0E
-
-    mov al, 13
-    int 0x10
-
-    mov al, 10
-    int 0x10
-
-    ; check entered command
-    call process_command
-
     jmp main_loop
 
 
-process_command:
-    ; check for "help"
-    mov si, input_buffer
-    mov di, help_cmd
-    call compare_strings
-    cmp ax, 1
-    je help_found
+print_string:
+.print_loop:
+    lodsb
+    cmp al, 0
+    je .done
 
-    ; check for "clear"
-    mov si, input_buffer
-    mov di, clear_cmd
-    call compare_strings
-    cmp ax, 1
-    je clear_found
-
-    ; check for "reboot"
-    mov si, input_buffer
-    mov di, reboot_cmd
-    call compare_strings
-    cmp ax, 1
-    je reboot_found
-
-    ; check for "echo ..."
-    mov si, input_buffer
-    mov di, echo_cmd
-    call starts_with
-    cmp ax, 1
-    je echo_found
-
-    jmp unknown
-
-
-help_found:
-    mov si, help_message
-    call print_string
-    ret
-
-
-clear_found:
-    ; clear screen by resetting video mode
-    mov ax, 0x0003
+    mov ah, 0x0E
     int 0x10
+    jmp .print_loop
+
+.done:
     ret
 
 
-reboot_found:
-    ; reboot system using BIOS interrupt
-    int 0x19
-    ret
-
-
-echo_found:
-    ; skip "echo "
-    mov si, input_buffer
-    add si, 5
-
-    ; print remaining text
-    call print_string
-
-    ; newline
+newline:
+    ; next line
     mov ah, 0x0E
 
     mov al, 13
@@ -150,12 +183,6 @@ echo_found:
     mov al, 10
     int 0x10
 
-    ret
-
-
-unknown:
-    mov si, unknown_message
-    call print_string
     ret
 
 
@@ -164,11 +191,9 @@ compare_strings:
     mov al, [si]
     mov bl, [di]
 
-    ; stop if characters don't match
     cmp al, bl
     jne .not_equal
 
-    ; both ended -> equal
     cmp al, 0
     je .equal
 
@@ -177,73 +202,71 @@ compare_strings:
     jmp .compare_loop
 
 .equal:
-    mov ax, 1
+    mov al, 1
     ret
 
 .not_equal:
-    mov ax, 0
+    mov al, 0
     ret
 
 
 starts_with:
-.loop:
-    ; end of prefix means success
+.check_loop:
     mov al, [di]
+
+    ; reached end of command
     cmp al, 0
-    je .match
+    je .check_space
 
-    mov al, [si]
-    mov bl, [di]
+    mov bl, [si]
 
-    ; mismatch
     cmp al, bl
-    jne .fail
+    jne .no_match
 
     inc si
     inc di
-    jmp .loop
+    jmp .check_loop
 
-.match:
-    mov ax, 1
+.check_space:
+    ; echo must be followed by a space
+    cmp byte [si], ' '
+    jne .no_match
+
+    mov al, 1
     ret
 
-.fail:
-    mov ax, 0
+.no_match:
+    mov al, 0
     ret
 
 
-print_string:
-    mov ah, 0x0E
-
-.print_loop:
-    ; load next character
-    lodsb
-
-    ; stop at null terminator
-    cmp al, 0
-    je .done
-
+clear_screen:
+    ; clear whole screen
+    mov ax, 0x0003
     int 0x10
-    jmp .print_loop
-
-.done:
     ret
 
 
-welcome_msg db "Bootloader started!",13,10,0
-prompt db "> ",0
+message db 'Simple Bootloader', 0
 
-help_cmd db "help",0
-clear_cmd db "clear",0
-reboot_cmd db "reboot",0
-echo_cmd db "echo ",0
+prompt db '> ', 0
 
-help_message db "Commands: help clear reboot echo",13,10,0
-unknown_message db "Unknown command",13,10,0
+help_cmd db 'help', 0
+clear_cmd db 'clear', 0
+echo_cmd db 'echo', 0
 
-; stores user input
-input_buffer times 64 db 0
+help_text_1 db 'Commands:', 0
+help_text_2 db 'help clear', 0
+help_text_3 db 'echo', 0
 
-; fill remaining bytes and add boot signature
-times 510-($-$$) db 0
+unknown_text db 'Unknown command', 0
+
+; typed input goes here
+buffer times 64 db 0
+
+; current typing position
+buffer_index db 0
+
+
+times 510 - ($ - $$) db 0
 dw 0xAA55
