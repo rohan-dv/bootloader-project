@@ -11,265 +11,54 @@ start:
     mov ss, ax
     mov sp, 0x7C00
 
-    ; welcome text
-    mov si, message
-    call print_string
-    call newline
+    ; save boot drive from BIOS
+    mov [boot_drive], dl
 
-    ; first prompt
-    mov si, prompt
+    ; loading text
+    mov si, loading_msg
     call print_string
 
-main_loop:
-    ; wait for keyboard input
-    mov ah, 0
-    int 0x16
+    ; read stage 2 from disk
+    mov ah, 0x02        ; BIOS read sectors
+    mov al, 1           ; sectors to read
+    mov ch, 0           ; cylinder
+    mov cl, 2           ; sector number (after boot sector)
+    mov dh, 0           ; head
 
-    ; enter key
-    cmp al, 13
-    je handle_enter
+    mov dl, [boot_drive]
+    mov bx, 0x8000      ; load address
 
-    ; backspace key
-    cmp al, 8
-    je handle_backspace
+    int 0x13
+    jc disk_error
 
-    ; don't overflow buffer
-    mov bl, [buffer_index]
-    cmp bl, 63
-    je main_loop
-
-    ; store typed character in buffer
-    mov bh, 0
-    mov si, buffer
-    add si, bx
-    mov [si], al
-
-    ; move index forward
-    inc byte [buffer_index]
-
-    ; print character to screen
-    mov ah, 0x0E
-    int 0x10
-
-    jmp main_loop
+    ; jump to loaded shell
+    jmp 0x0000:0x8000
 
 
-handle_enter:
-    ; add null terminator at end of input
-    mov bl, [buffer_index]
-    mov bh, 0
-    mov si, buffer
-    add si, bx
-    mov byte [si], 0
-
-    call newline
-
-    ; check help command
-    mov si, buffer
-    mov di, help_cmd
-    call compare_strings
-
-    cmp al, 1
-    je run_help
-
-    ; check clear command
-    mov si, buffer
-    mov di, clear_cmd
-    call compare_strings
-
-    cmp al, 1
-    je run_clear
-
-    ; check echo command
-    mov si, buffer
-    mov di, echo_cmd
-    call starts_with
-
-    cmp al, 1
-    je run_echo
-
-    ; unknown command
-    mov si, unknown_text
+disk_error:
+    mov si, error_msg
     call print_string
-    call newline
-    jmp reset_input
-
-
-run_help:
-    mov si, help_text_1
-    call print_string
-    call newline
-
-    mov si, help_text_2
-    call print_string
-    call newline
-
-    mov si, help_text_3
-    call print_string
-    call newline
-
-    jmp reset_input
-
-
-run_clear:
-    call clear_screen
-
-    ; print prompt again
-    mov si, prompt
-    call print_string
-
-    jmp clear_buffer
-
-
-run_echo:
-    ; skip "echo "
-    mov si, buffer
-    add si, 5
-    call print_string
-    call newline
-    jmp reset_input
-
-
-reset_input:
-    ; show prompt again
-    mov si, prompt
-    call print_string
-
-clear_buffer:
-    ; reset input buffer
-    mov byte [buffer_index], 0
-    mov byte [buffer], 0
-
-    jmp main_loop
-
-
-handle_backspace:
-    ; nothing to delete
-    cmp byte [buffer_index], 0
-    je main_loop
-
-    ; move index back
-    dec byte [buffer_index]
-
-    ; erase character visually
-    mov ah, 0x0E
-
-    mov al, 8
-    int 0x10
-
-    mov al, ' '
-    int 0x10
-
-    mov al, 8
-    int 0x10
-
-    jmp main_loop
+    jmp $
 
 
 print_string:
-.print_loop:
+.loop:
     lodsb
     cmp al, 0
     je .done
 
     mov ah, 0x0E
     int 0x10
-
-    jmp .print_loop
+    jmp .loop
 
 .done:
     ret
 
 
-newline:
-    mov ah, 0x0E
+loading_msg db 'Loading shell...', 0
+error_msg db 'Disk read failed', 0
 
-    mov al, 13
-    int 0x10
-
-    mov al, 10
-    int 0x10
-
-    ret
-
-
-compare_strings:
-.compare_loop:
-    mov al, [si]
-    mov bl, [di]
-
-    cmp al, bl
-    jne .not_equal
-
-    cmp al, 0
-    je .equal
-
-    inc si
-    inc di
-    jmp .compare_loop
-
-.equal:
-    mov al, 1
-    ret
-
-.not_equal:
-    mov al, 0
-    ret
-
-
-starts_with:
-.check_loop:
-    mov al, [di]
-
-    cmp al, 0
-    je .check_space
-
-    mov bl, [si]
-
-    cmp al, bl
-    jne .no_match
-
-    inc si
-    inc di
-    jmp .check_loop
-
-.check_space:
-    cmp byte [si], ' '
-    jne .no_match
-
-    mov al, 1
-    ret
-
-.no_match:
-    mov al, 0
-    ret
-
-
-clear_screen:
-    ; BIOS video mode reset
-    mov ax, 0x0003
-    int 0x10
-    ret
-
-
-message db 'Tiny Bootloader Shell', 0
-prompt db '> ', 0
-
-help_cmd db 'help', 0
-clear_cmd db 'clear', 0
-echo_cmd db 'echo', 0
-
-help_text_1 db 'Commands:', 0
-help_text_2 db 'help clear echo', 0
-help_text_3 db 'Use: echo hello', 0
-
-unknown_text db 'Unknown command', 0
-
-; stores keyboard input
-buffer times 64 db 0
-
-; current typing position
-buffer_index db 0
+boot_drive db 0
 
 times 510 - ($ - $$) db 0
 dw 0xAA55
